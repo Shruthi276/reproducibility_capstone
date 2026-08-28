@@ -1,0 +1,5 @@
+outs:
+- md5: ab22142d017e620d8ea9fa00e2b26b90
+  size: 18399953
+  hash: md5
+  path: mnist.npz
