@@ -14,7 +14,8 @@ from torch.utils.data import TensorDataset, DataLoader
 
 import mlflow
 import mlflow.pytorch
-
+from mlflow.models import ModelSignature
+from mlflow.types.schema import Schema, TensorSpec
 
 SEED = 42
 
@@ -468,13 +469,36 @@ def main():
         )
 
 
-        input_example = X_test[:1].detach().cpu()
+        input_example = X_test[:1].detach().cpu().numpy()
+
+        signature = ModelSignature(
+            inputs=Schema(
+                [
+                    TensorSpec(
+                        np.dtype(np.float32),
+                        (-1, X_test.shape[1])
+                    )
+                ]
+            ),
+            outputs=Schema(
+                [
+                    TensorSpec(
+                        np.dtype(np.float32),
+                        (-1, 10)
+                    )
+                ]
+            )
+        )
+    
 
         mlflow.pytorch.log_model(
-        model,
-        name="model",
-        input_example=input_example
+            model,
+            name="model",
+            input_example=input_example,
+            signature=signature,
+            serialization_format="pt2"
         )
+        
 
 
         print("\n" + "=" * 60)
