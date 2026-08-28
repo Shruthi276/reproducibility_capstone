@@ -4,6 +4,7 @@ import json
 import random
 import hashlib
 import subprocess
+from xml.parsers.expat import model
 
 import numpy as np
 import torch
@@ -467,11 +468,13 @@ def main():
         )
 
 
-        mlflow.pytorch.log_model(
-            model,
-            name="model"
-        )
+        input_example = X_test[:1].detach().cpu()
 
+        mlflow.pytorch.log_model(
+        model,
+        name="model",
+        input_example=input_example
+        )
 
 
         print("\n" + "=" * 60)
