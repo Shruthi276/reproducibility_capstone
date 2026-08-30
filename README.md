@@ -60,7 +60,7 @@ reproducibility_capstone/
 
 ##  Step-by-Step Workflow
 
-### Part 1: Partner A — Train, Log, Version, Register (6 marks)
+### Part 1: Partner A — Train, Log, Version, Register 
 
 #### 1. Setup Environment
 ```bash
@@ -113,7 +113,7 @@ Partner A shares only the repository URL and the target Git commit SHA with Part
 
 ---
 
-### Part 3: Partner B — Zero-Communication Reproduction (6 marks)
+### Part 3: Partner B — Zero-Communication Reproduction 
 
 Partner B reproduces the result using **strictly** the allowed tool commands:
 
@@ -138,7 +138,7 @@ python src/train.py
 
 ---
 
-### Part 4: Partner B — Verification & MLflow Note Logging (3 marks)
+### Part 4: Partner B — Verification & MLflow Note Logging 
 
 Partner B compares the reproduction run with Partner A's baseline run using the automated verification script:
 
