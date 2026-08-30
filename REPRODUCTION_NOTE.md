@@ -22,7 +22,7 @@
 
 None. All parameters identical.
 
-**Reproduction method, no communication with Partner A about environment or data:**
+**Reproduction method, no communication with Partner A about environment, data:**
 
 ```
 git clone https://github.com/Shruthi276/reproducibility_capstone.git
