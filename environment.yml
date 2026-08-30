@@ -1,11 +1,14 @@
-name: reproducibility_capstone
-
+name: mnist-mlflow
+channels:
+  - conda-forge
 dependencies:
-  - python=3.14.4
+  - python=3.11
+  - numpy
+  - scikit-learn
+  - scipy
+  - pandas
   - pip
   - pip:
-      - torch
-      - torchvision
       - mlflow
-      - dvc
-      - numpy
+      - dvc[all]
+
