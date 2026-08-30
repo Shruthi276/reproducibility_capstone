@@ -1,21 +1,18 @@
 import os
-import sys
 import json
 import random
 import hashlib
 import subprocess
-from xml.parsers.expat import model
 
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-
 import mlflow
-import mlflow.pytorch
+import mlflow.sklearn
+
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import log_loss, accuracy_score
 from mlflow.models import ModelSignature
 from mlflow.types.schema import Schema, TensorSpec
+
 
 SEED = 42
 
@@ -33,21 +30,9 @@ TRACKING_URI = os.getenv(
 )
 
 
-
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
-
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
 
 
 def get_git_commit():
@@ -78,9 +63,7 @@ def get_file_hash(filepath):
     return sha256.hexdigest()
 
 
-
 def load_data():
-
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(
             f"Dataset not found: {DATA_PATH}\n"
@@ -89,152 +72,30 @@ def load_data():
 
     data = np.load(DATA_PATH)
 
-    X_train = torch.tensor(
-        data["X_train"],
-        dtype=torch.float32
-    )
+    X_train = data["X_train"].astype(np.float32)
+    y_train = data["y_train"].astype(np.int64)
 
-    y_train = torch.tensor(
-        data["y_train"],
-        dtype=torch.long
-    )
+    X_test = data["X_test"].astype(np.float32)
+    y_test = data["y_test"].astype(np.int64)
 
-    X_test = torch.tensor(
-        data["X_test"],
-        dtype=torch.float32
-    )
+    # FIX 1 ---------------------------------------------------------------
+    # MLPClassifier requires 2D input of shape (n_samples, n_features), but an
+    # earlier version of the dataset was stored as (N, 28, 28) and produced:
+    #   ValueError: Found array with dim 3, while dim <= 2 is required
+    #
+    # prepare_data_updated.py now writes flat (N, 784) arrays, so this reshape
+    # is normally a no-op. It is kept as a guard so the script cannot break
+    # again if an older .npz is checked out from DVC.
+    # ---------------------------------------------------------------------
+    if X_train.ndim > 2:
+        X_train = X_train.reshape(X_train.shape[0], -1)
 
-    y_test = torch.tensor(
-        data["y_test"],
-        dtype=torch.long
-    )
+    if X_test.ndim > 2:
+        X_test = X_test.reshape(X_test.shape[0], -1)
+
+    print(f"X_train: {X_train.shape}   X_test: {X_test.shape}")
 
     return X_train, y_train, X_test, y_test
-
-
-
-class MLP(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-
-        self.flatten = nn.Flatten()
-
-        self.fc1 = nn.Linear(
-            28 * 28,
-            128
-        )
-
-        self.relu = nn.ReLU()
-
-        self.fc2 = nn.Linear(
-            128,
-            10
-        )
-
-    def forward(self, x):
-
-        x = self.flatten(x)
-
-        x = self.fc1(x)
-
-        x = self.relu(x)
-
-        x = self.fc2(x)
-
-        return x
-
-
-
-def train_one_epoch(
-    model,
-    train_loader,
-    criterion,
-    optimizer,
-    device
-):
-
-    model.train()
-
-    total_loss = 0.0
-    total_samples = 0
-
-    for images, labels in train_loader:
-
-        images = images.to(device)
-        labels = labels.to(device)
-
-        optimizer.zero_grad()
-
-        outputs = model(images)
-
-        loss = criterion(
-            outputs,
-            labels
-        )
-
-        loss.backward()
-
-        optimizer.step()
-
-        batch_size = labels.size(0)
-
-        total_loss += loss.item() * batch_size
-        total_samples += batch_size
-
-    average_loss = total_loss / total_samples
-
-    return average_loss
-
-
-
-def evaluate(
-    model,
-    test_loader,
-    criterion,
-    device
-):
-
-    model.eval()
-
-    total_loss = 0.0
-    correct = 0
-    total = 0
-
-    with torch.no_grad():
-
-        for images, labels in test_loader:
-
-            images = images.to(device)
-            labels = labels.to(device)
-
-            outputs = model(images)
-
-            loss = criterion(
-                outputs,
-                labels
-            )
-
-            batch_size = labels.size(0)
-
-            total_loss += loss.item() * batch_size
-
-            predictions = torch.argmax(
-                outputs,
-                dim=1
-            )
-
-            correct += (
-                predictions == labels
-            ).sum().item()
-
-            total += batch_size
-
-    test_loss = total_loss / total
-    test_accuracy = correct / total
-
-    return test_loss, test_accuracy
-
 
 
 def main():
@@ -243,33 +104,17 @@ def main():
     print("MNIST REPRODUCIBILITY CAPSTONE")
     print("=" * 60)
 
-
-
     set_seed(SEED)
 
-
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
-
-    print(f"Device: {device}")
-
+    print("Device: CPU (scikit-learn)")
 
     git_commit = get_git_commit()
 
     print(f"Git commit: {git_commit}")
 
+    dataset_hash = get_file_hash(DATA_PATH)
 
-    dataset_hash = get_file_hash(
-        DATA_PATH
-    )
-
-    print(
-        f"Dataset SHA256: {dataset_hash}"
-    )
-
+    print(f"Dataset SHA256: {dataset_hash}")
 
     (
         X_train,
@@ -278,44 +123,18 @@ def main():
         y_test
     ) = load_data()
 
-    train_dataset = TensorDataset(
-        X_train,
-        y_train
-    )
-
-    test_dataset = TensorDataset(
-        X_test,
-        y_test
-    )
-
-    generator = torch.Generator()
-
-    generator.manual_seed(SEED)
-
-    train_loader = DataLoader(
-        train_dataset,
+    # Scikit-learn MLPClassifier replaces the PyTorch MLP.
+    model = MLPClassifier(
+        hidden_layer_sizes=(128,),
+        activation="relu",
+        solver="adam",
+        learning_rate_init=LEARNING_RATE,
         batch_size=BATCH_SIZE,
+        max_iter=EPOCHS,
+        random_state=SEED,
         shuffle=True,
-        generator=generator,
-        num_workers=0
+        verbose=False
     )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=0
-    )
-
-    model = MLP().to(device)
-
-    criterion = nn.CrossEntropyLoss()
-
-    optimizer = optim.Adam(
-        model.parameters(),
-        lr=LEARNING_RATE
-    )
-
 
     mlflow.set_tracking_uri(
         TRACKING_URI
@@ -329,98 +148,78 @@ def main():
         f"MLflow URI: {TRACKING_URI}"
     )
 
-
-
     with mlflow.start_run(
         run_name="mnist_mlp_reproducibility"
     ) as run:
 
-
-
         mlflow.log_params({
-
             "learning_rate": LEARNING_RATE,
-
             "batch_size": BATCH_SIZE,
-
             "epochs": EPOCHS,
-
             "seed": SEED,
-
-            "model": "MLP",
-
+            "model": "MLPClassifier",
             "hidden_layer_1": 128,
-
-            "input_size": 784,
-
+            "input_size": X_train.shape[1],
             "output_size": 10
-
         })
-
- 
 
         mlflow.set_tags({
-
             "git_commit": git_commit,
-
             "dataset_sha256": dataset_hash,
-
             "dataset_versioning": "DVC",
-
-            "partner_role": "Partner_A"
-
+            "partner_role": "Partner_A",
+            "framework": "scikit-learn"
         })
 
+        print("\nTraining MLP...")
 
+        # MLPClassifier performs the complete training.
+        model.fit(X_train, y_train)
 
-        for epoch in range(EPOCHS):
+        # Calculate final metrics on training and test data.
+        train_probabilities = model.predict_proba(X_train)
+        test_probabilities = model.predict_proba(X_test)
 
-            train_loss = train_one_epoch(
-                model,
-                train_loader,
-                criterion,
-                optimizer,
-                device
-            )
+        train_predictions = model.predict(X_train)
+        test_predictions = model.predict(X_test)
 
-            test_loss, test_accuracy = evaluate(
-                model,
-                test_loader,
-                criterion,
-                device
-            )
-
-            # Log metrics for every epoch
-            mlflow.log_metrics({
-
-                "train_loss": train_loss,
-
-                "test_loss": test_loss,
-
-                "test_accuracy": test_accuracy
-
-            }, step=epoch)
-
-            print(
-                f"Epoch {epoch + 1}/{EPOCHS} | "
-                f"Train Loss: {train_loss:.6f} | "
-                f"Test Loss: {test_loss:.6f} | "
-                f"Test Accuracy: {test_accuracy:.6f}"
-            )
-
-
-
-        mlflow.log_metric(
-            "final_test_accuracy",
-            test_accuracy
+        train_loss = log_loss(
+            y_train,
+            train_probabilities,
+            labels=np.arange(10)
         )
 
-        mlflow.log_metric(
-            "final_test_loss",
-            test_loss
+        test_loss = log_loss(
+            y_test,
+            test_probabilities,
+            labels=np.arange(10)
         )
 
+        train_accuracy = accuracy_score(
+            y_train,
+            train_predictions
+        )
 
+        test_accuracy = accuracy_score(
+            y_test,
+            test_predictions
+        )
+
+        # Log the final metrics.
+        mlflow.log_metrics({
+            "train_loss": train_loss,
+            "test_loss": test_loss,
+            "train_accuracy": train_accuracy,
+            "test_accuracy": test_accuracy,
+            "final_test_accuracy": test_accuracy,
+            "final_test_loss": test_loss
+        })
+
+        print(
+            f"Train Loss: {train_loss:.6f} | "
+            f"Test Loss: {test_loss:.6f} | "
+            f"Test Accuracy: {test_accuracy:.6f}"
+        )
 
         os.makedirs(
             "artifacts",
@@ -428,25 +227,15 @@ def main():
         )
 
         results = {
-
             "run_id": run.info.run_id,
-
             "seed": SEED,
-
             "git_commit": git_commit,
-
             "dataset_sha256": dataset_hash,
-
             "final_test_accuracy": test_accuracy,
-
             "final_test_loss": test_loss,
-
             "learning_rate": LEARNING_RATE,
-
             "batch_size": BATCH_SIZE,
-
             "epochs": EPOCHS
-
         }
 
         artifact_path = (
@@ -464,12 +253,40 @@ def main():
                 indent=4
             )
 
-        mlflow.log_artifact(
-            artifact_path
-        )
+        # FIX 2 -------------------------------------------------------------
+        # Artifact upload used to abort the whole run with
+        #   PermissionError: [Errno 13] Permission denied: '/home/<user>'
+        # when a REMOTE client logged to this server. The cause is server-side:
+        # the tracking server was started without --serve-artifacts, so it
+        # hands clients an absolute path on ITS filesystem, which the remote
+        # client then tries to create on its own machine.
+        #
+        # The proper fix is to start the server with:
+        #   mlflow server --backend-store-uri sqlite:///mlflow.db \
+        #       --artifacts-destination ./mlartifacts --serve-artifacts \
+        #       --host 0.0.0.0 --port 5000
+        # and to run fix_artifact_paths.py once for pre-existing runs.
+        #
+        # These try/except guards mean a misconfigured server degrades to
+        # "metrics logged, artifacts skipped" instead of losing the whole run.
+        # -------------------------------------------------------------------
+        print(f"Artifact URI: {run.info.artifact_uri}")
 
+        try:
+            mlflow.log_artifact(artifact_path)
+            print("Logged results.json")
 
-        input_example = X_test[:1].detach().cpu().numpy()
+        except Exception as error:
+            print(
+                f"WARNING: could not log results.json ({type(error).__name__}: {error})"
+            )
+            print(
+                "  The tracking server is likely missing --serve-artifacts. "
+                "Params and metrics are unaffected."
+            )
+
+        # MLflow scikit-learn model signature.
+        input_example = X_test[:1]
 
         signature = ModelSignature(
             inputs=Schema(
@@ -483,51 +300,43 @@ def main():
             outputs=Schema(
                 [
                     TensorSpec(
-                        np.dtype(np.float32),
-                        (-1, 10)
+                        np.dtype(np.int64),
+                        (-1,)
                     )
                 ]
             )
         )
-    
 
-        mlflow.pytorch.log_model(
-            model,
-            name="model",
-            input_example=input_example,
-            signature=signature,
-            serialization_format="pt2"
-        )
-        
+        try:
+            mlflow.sklearn.log_model(
+                model,
+                name="model",
+                input_example=input_example,
+                signature=signature,
+                skops_trusted_types=[
+                    "sklearn.neural_network._stochastic_optimizers.AdamOptimizer"
+                ]
+            )
+            print("Logged model artifact")
 
+        except Exception as error:
+            print(
+                f"WARNING: could not log the model "
+                f"({type(error).__name__}: {error})"
+            )
+            print(
+                "  Same cause as above: the server needs --serve-artifacts."
+            )
 
         print("\n" + "=" * 60)
-
-        print(
-            "TRAINING COMPLETED SUCCESSFULLY"
-        )
-
+        print("TRAINING COMPLETED SUCCESSFULLY")
         print("=" * 60)
 
-        print(
-            f"Run ID: {run.info.run_id}"
-        )
-
-        print(
-            f"Final Test Accuracy: "
-            f"{test_accuracy:.6f}"
-        )
-
-        print(
-            f"Git Commit: {git_commit}"
-        )
-
-        print(
-            f"Dataset Hash: {dataset_hash}"
-        )
-
+        print(f"Run ID: {run.info.run_id}")
+        print(f"Final Test Accuracy: {test_accuracy:.6f}")
+        print(f"Git Commit: {git_commit}")
+        print(f"Dataset Hash: {dataset_hash}")
         print("=" * 60)
-
 
         with open(
             "artifacts/latest_run_id.txt",
@@ -540,5 +349,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()

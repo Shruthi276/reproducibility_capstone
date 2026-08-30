@@ -1,9 +1,7 @@
 import os
 import random
 import numpy as np
-import torch
-from torchvision.datasets import MNIST
-
+from sklearn.datasets import fetch_openml
 
 SEED = 42
 DATA_PATH = "data/mnist.npz"
@@ -12,7 +10,6 @@ DATA_PATH = "data/mnist.npz"
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
 
 
 def main():
@@ -22,23 +19,25 @@ def main():
 
     print("Downloading/loading MNIST...")
 
-    train_dataset = MNIST(
-        root="data/raw",
-        train=True,
-        download=True
+    # Load MNIST from OpenML using scikit-learn.
+    # The resulting data is converted to the same format expected by train.py.
+    mnist = fetch_openml(
+        "mnist_784",
+        version=1,
+        as_frame=False,
+        parser="auto"
     )
 
-    test_dataset = MNIST(
-        root="data/raw",
-        train=False,
-        download=True
-    )
+    X = mnist.data.astype(np.float32) / 255.0
+    y = mnist.target.astype(np.int64)
 
-    X_train = train_dataset.data.numpy().astype(np.float32) / 255.0
-    y_train = train_dataset.targets.numpy().astype(np.int64)
+    # MNIST contains 70,000 samples:
+    # first 60,000 are used for training and last 10,000 for testing.
+    X_train = X[:60000]
+    y_train = y[:60000]
 
-    X_test = test_dataset.data.numpy().astype(np.float32) / 255.0
-    y_test = test_dataset.targets.numpy().astype(np.int64)
+    X_test = X[60000:]
+    y_test = y[60000:]
 
     np.savez_compressed(
         DATA_PATH,
