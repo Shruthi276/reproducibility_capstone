@@ -9,8 +9,7 @@
 - Absolute delta: **0.000000**
 - Stated tolerance: +/-0.005
 - Verification run_id: `c5edbc1b34e24f30bcf793bc0f20a9a0`
-- Partner A git_commit: `094aac6609eef55d5ffac99a0d98199371b3b5b4`
-- Partner B checked-out commit: `e7b7a4545cbb318037e02b9ae404e207457bc0f2`
+
 
 **Environment comparison**
 
